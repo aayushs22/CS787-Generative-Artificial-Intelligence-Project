@@ -1,0 +1,84 @@
+# Smoke-test config: tiny toy corpus, tiny models, CPU-friendly (< 2 min).
+# Every value here is a placeholder chosen only to make the pipeline run fast;
+# none of them are tuned. Copy this file for real runs and set your own values.
+
+seed: 0
+output_dir: runs/smoke
+device: auto            # auto | cpu | cuda
+
+data:
+  source: toy           # toy | tinystories | path/to/file.txt
+  max_sentences: 3000   # toy only
+  max_stories: null     # tinystories only
+  min_len: 3
+  max_len: 12
+  cipher_fraction: 0.5  # share of cleaned sentences used for the cipher pool
+  vocab_size: 60
+  n_cipher_sentences: 300
+  n_english_sentences: 1000
+
+cipher:
+  alphabet_size: 8
+  min_code_len: 1
+  max_code_len: 3
+  length_mode: random   # random | correlated
+
+segmentation:
+  methods: [oracle, perturbed, entropy, dp_unigram, hdp_bigram, charlm]
+  perturbed:
+    rate: 0.1
+  entropy:
+    context: 2
+    quantile: 0.5
+  dp_unigram:
+    alpha0: 20
+    p_stop: 0.5
+    tau: 2
+    iterations: 20
+    anneal_start_temp: 5
+    anneal_steps: 5
+    init_boundary_prob: 0.5
+  hdp_bigram:
+    alpha0: 100
+    alpha1: 10
+    p_stop: 0.5
+    tau: 2
+    iterations: 20
+    anneal_start_temp: 5
+    anneal_steps: 5
+    init_boundary_prob: 0.5
+  charlm:
+    quantile: 0.5
+    model: {d_model: 32, n_layers: 1, n_heads: 2, d_ff: 64, max_len: 64, dropout: 0.0}
+    train: {steps: 50, batch_size: 32, lr: 3.0e-3, weight_decay: 0.0, log_every: 0}
+
+decipherment:
+  segmentations: null   # null = every segmentation above
+  methods: [freq, em, search_ngram2, search_ngram3, search_neural]
+  em:
+    lm_order: 2
+    start_k: 20
+    step_k: 20
+    iterations: 5
+    fix_threshold: 0.5
+    smoothing: 1.0e-3
+    stretch: 3
+    beam: 20
+    batch_size: 256
+    max_cipher_types: 500
+  search:
+    init: em            # em | freq
+    steps: 300
+    t_start: 1.0
+    t_end: 0.05
+    max_sentences: 200
+    rank_window: 5
+    swap_prob: 0.5
+    log_every: 0
+  neural_lm:
+    model: {d_model: 32, n_layers: 1, n_heads: 2, d_ff: 64, max_len: 32, dropout: 0.0}
+    train: {steps: 50, batch_size: 32, lr: 3.0e-3, weight_decay: 0.0, log_every: 0}
+    score_batch_size: 256
+
+evaluation:
+  freq_bands: [[1, 1], [2, 9], [10, null]]
