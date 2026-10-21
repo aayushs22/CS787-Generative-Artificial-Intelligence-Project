@@ -117,4 +117,83 @@ def test_end_to_end(tmp_path):
     res = main(["--config", str(ROOT / "configs/smoke.yaml"), "--output-dir", str(tmp_path)])
     assert (tmp_path / "results.json").exists()
     assert res["segmentation"]["oracle"]["token_f"] == 1.0
-    assert "charlm/search_neural" in res["decipherment"]
+    for m in ("search_neural", "search_llm", "llm_refine"):
+        assert f"charlm/{m}" in res["decipherment"]
+    assert (tmp_path / "llm" / "lm.pt").exists() and (tmp_path / "llm" / "corrector.pt").exists()
+
+
+# --- LLM: team models, techniques, corrector SFT ----------------------------------
+
+import torch  # noqa: E402
+
+from decipher import llm as llm_mod, neural  # noqa: E402
+
+TINY = {"d_model": 16, "n_layers": 2, "n_heads": 2, "n_kv_heads": 1, "d_ff": 32, "max_seq_len": 24,
+        "dropout": 0.0, "norm_first": True}
+
+
+@pytest.mark.parametrize("arch,pos", [("decoder1", "sinusoidal"), ("decoder3", "rope"), ("decoder3", "sinusoidal")])
+def test_team_decoder_is_causal(arch, pos):
+    torch.manual_seed(0)
+    m = neural.build_model(20, dict(TINY, arch=arch, pos_emb_type=pos)).eval()
+    x = torch.randint(3, 20, (2, 10))
+    x2 = x.clone()
+    x2[:, 6:] = torch.randint(3, 20, (2, 4))
+    with torch.no_grad():
+        a, b = m(x), m(x2)
+    assert torch.allclose(a[:, :6], b[:, :6], atol=1e-5)  # right padding never leaks backwards
+
+
+TECHS = [{"name": "full_ft"}, {"name": "lora", "r": 2, "alpha": 4, "targets": ["q_proj", "v_proj"]},
+         {"name": "lorma", "r": 2, "alpha": 4, "targets": ["q_proj", "v_proj"]},
+         {"name": "rslora", "r": 2, "alpha": 4, "targets": ["q_proj", "v_proj"]},
+         {"name": "bitfit"}, {"name": "partial_ft", "k": 1}, {"name": "ia3"},
+         {"name": "adapters", "bottleneck": 4}]
+
+
+@pytest.mark.parametrize("tech", TECHS, ids=lambda t: t["name"])
+def test_team_techniques_apply(tech):
+    torch.manual_seed(0)
+    lm = neural.build_model(20, dict(TINY, arch="decoder3", pos_emb_type="rope")).eval()
+    bb = llm_mod.make_backbone(lm, tech).eval()
+    c = neural.count_params(bb)
+    assert 0 < c["trainable"] <= c["total"]
+    if tech["name"] != "full_ft":
+        assert c["trainable"] < c["total"]
+    x = torch.randint(3, 20, (2, 8))
+    with torch.no_grad():
+        assert torch.allclose(lm(x), bb(x), atol=1e-5)  # every technique starts at the pretrained model
+
+
+def test_corrector_batch_masks_noisy_half():
+    v = neural.Vocab(["a", "b", "c"])
+    clean = [[3, 4, 5]]
+    x, y = llm_mod.corrector_batch(clean, torch.tensor([0, 1, 2, 4, 3, 5]), v, 20)
+    # sequence: <bos> 4 3 5 <eos> 3 4 5 <eos>; targets supervised only for "3 4 5 <eos>"
+    assert x[0].tolist() == [1, 4, 3, 5, 2, 3, 4, 5]
+    assert y[0].tolist() == [-100, -100, -100, -100, 3, 4, 5, 2]
+
+
+def test_corruptor_is_type_consistent(corpus):
+    _, _, english, _, _, _, _ = corpus
+    v = neural.Vocab({w for s in english for w in s})
+    m = llm_mod.Corruptor(v, english, 0.5, 0.5, 3).sample_map(torch.Generator().manual_seed(0))
+    assert (m[:3] == torch.arange(3)).all() and (m != torch.arange(len(v))).any()
+
+
+def test_checkpoint_roundtrip_and_kd(tmp_path, corpus):
+    cfg, _, english, _, _, _, _ = corpus
+    lc = dict(cfg["llm"], checkpoint_dir=str(tmp_path / "a"))
+    teacher = llm_mod.LLM(english, lc, cfg["data"]["max_len"], "cpu", 0, tmp_path / "a")
+    corr = teacher.corrector
+    loaded, _, _ = llm_mod.load_checkpoint(tmp_path / "a" / "corrector.pt", "cpu")
+    x = torch.randint(3, len(teacher.vocab), (2, 9))
+    with torch.no_grad():
+        assert torch.allclose(corr(x), loaded(x), atol=1e-6)
+
+    kd = {"teacher_checkpoint": str(tmp_path / "a" / "corrector.pt"), "temperature": 2.0, "alpha": 0.5}
+    lc2 = dict(lc, checkpoint_dir=str(tmp_path / "b"),
+               corrector=dict(lc["corrector"], kd=kd, technique={"name": "full_ft"}))
+    student = llm_mod.LLM(english, lc2, cfg["data"]["max_len"], "cpu", 0, tmp_path / "b")
+    out = llm_mod.correct(student, [english[0], english[1]])
+    assert [len(o) for o in out] == [len(english[0]), len(english[1])]

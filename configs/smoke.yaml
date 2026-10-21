@@ -49,12 +49,14 @@ segmentation:
     init_boundary_prob: 0.5
   charlm:
     quantile: 0.5
-    model: {d_model: 32, n_layers: 1, n_heads: 2, d_ff: 64, max_len: 64, dropout: 0.0}
-    train: {steps: 50, batch_size: 32, lr: 3.0e-3, weight_decay: 0.0, log_every: 0}
+    model: {arch: decoder3, d_model: 32, n_layers: 1, n_heads: 2, n_kv_heads: 1, d_ff: 64,
+            max_seq_len: 64, dropout: 0.0, pos_emb_type: rope, norm_first: true}
+    train: {steps: 50, batch_size: 32, lr: 3.0e-3, min_lr: 3.0e-4, warmup_steps: 5,
+            weight_decay: 0.0, grad_clip: 1.0, amp: none, log_every: 0}
 
 decipherment:
   segmentations: null   # null = every segmentation above
-  methods: [freq, em, search_ngram2, search_ngram3, search_neural]
+  methods: [freq, em, search_ngram2, search_ngram3, search_neural, search_llm, llm_refine]
   em:
     lm_order: 2
     start_k: 20
@@ -73,12 +75,43 @@ decipherment:
     t_end: 0.05
     max_sentences: 200
     rank_window: 5
-    swap_prob: 0.5
+    top_k: 10           # search_llm: LLM candidates per cipher unit
+    refresh_every: 100  # search_llm: recompute LLM candidates every N steps
+    candidate_prob: 0.8 # search_llm: share of proposals drawn from LLM candidates
     log_every: 0
-  neural_lm:
-    model: {d_model: 32, n_layers: 1, n_heads: 2, d_ff: 64, max_len: 32, dropout: 0.0}
-    train: {steps: 50, batch_size: 32, lr: 3.0e-3, weight_decay: 0.0, log_every: 0}
-    score_batch_size: 256
+  refine:               # llm_refine
+    init: em            # em | freq | search_ngram2 | ...
+    rounds: 2
+    max_sentences: 200
+    min_share: 0.3      # a unit is reassigned only if this share of its occurrences agree
+
+# From-scratch LLM (team's DecoderLM). Used by search_neural, search_llm, llm_refine.
+llm:
+  checkpoint_dir: null      # null = <output_dir>/llm ; share across runs to train once
+  reuse_checkpoints: true   # load lm.pt / corrector.pt from checkpoint_dir if present
+  score_batch_size: 256
+  model: {arch: decoder3, d_model: 32, n_layers: 1, n_heads: 2, n_kv_heads: 1, d_ff: 64,
+          max_seq_len: 32, dropout: 0.0, pos_emb_type: rope, norm_first: true}
+  pretrain: {steps: 50, batch_size: 32, lr: 3.0e-3, min_lr: 3.0e-4, warmup_steps: 5,
+             weight_decay: 0.0, grad_clip: 1.0, amp: none, eval_every: 25, val_fraction: 0.1,
+             log_every: 0}
+  corrector:                # SFT stage; max_seq_len must be >= 2 * data.max_len + 2
+    technique: {name: lora, r: 4, alpha: 8, targets: [q_proj, v_proj]}
+    kd: null                # or {teacher_checkpoint: path/to/corrector.pt, temperature: .., alpha: ..}
+    corrupt_min: 0.1        # fraction of word types corrupted per batch ~ U[min, max]
+    corrupt_max: 0.5
+    rank_window: 5          # replacements come from +-window frequency ranks
+    steps: 50
+    batch_size: 32
+    lr: 3.0e-3
+    min_lr: 3.0e-4
+    warmup_steps: 5
+    weight_decay: 0.0
+    grad_clip: 1.0
+    amp: none               # none | bf16 | fp16
+    eval_every: 25
+    val_fraction: 0.1
+    log_every: 0
 
 evaluation:
   freq_bands: [[1, 1], [2, 9], [10, null]]

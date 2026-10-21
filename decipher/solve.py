@@ -163,17 +163,25 @@ class NeuralScorer:
         return np.array(sequence_logprobs(self.model, ids, self.device, self.bs))
 
 
-def key_search(units_corpus, english, init_key, scorer, cfg, seed, log=print):
-    """Metropolis search over keys. Moves: reassign one cipher unit to a new
-    English word (drawn near its frequency rank, or uniformly), or swap the
-    words of two units. Score = sum of LM log-probs of the decoded sentences
-    (a fixed subsample of at most `max_sentences` unique cipher sentences)."""
+def key_search(units_corpus, english, init_key, scorer, cfg, seed, log=print, candidates_fn=None):
+    """Metropolis search over keys. Each move picks a cipher unit u and a new
+    English word w for it: from `candidates_fn` (LLM proposals) with probability
+    `candidate_prob`, otherwise near u's frequency rank or uniformly. If another
+    unit v already holds w, u and v swap words, so a one-to-one key stays
+    one-to-one. Score = sum of LM log-probs of the decoded sentences (a fixed
+    subsample of at most `max_sentences` unique cipher sentences).
+
+    candidates_fn(sents, weight, key) -> {unit: [words]} is refreshed every
+    `refresh_every` steps."""
     rng = random.Random(seed)
     eng_rank = _ranked(english)
     eng_set = set(eng_rank)
     units = _ranked(units_corpus)
     fallback = frequency_key(units_corpus, english)
     key = {u: (init_key.get(u) if init_key.get(u) in eng_set else fallback[u]) for u in units}
+    holders = defaultdict(set)
+    for u, w in key.items():
+        holders[w].add(u)
 
     uniq = list(Counter(tuple(s) for s in units_corpus).items())
     rng.shuffle(uniq)
@@ -193,26 +201,26 @@ def key_search(units_corpus, english, init_key, scorer, cfg, seed, log=print):
     total = float(cur @ weight)
     log(f"  [search] start logprob={total:.1f} over {len(sents)} unique sentences")
     steps = cfg["steps"]
-    accepted = 0
+    accepted, cands = 0, None
     for step in range(steps):
+        if candidates_fn and step % cfg["refresh_every"] == 0:
+            cands = candidates_fn(sents, weight, key)
         temp = cfg["t_start"] + (cfg["t_end"] - cfg["t_start"]) * step / max(1, steps - 1)
         u = units[min(int(np.searchsorted(unit_cdf, rng.random())), len(units) - 1)]
-        change = {}
-        if rng.random() < cfg["swap_prob"]:
-            v = rng.choice(units)
-            if v == u or key[u] == key[v]:
-                continue
-            change = {u: key[v], v: key[u]}
+        if cands and rng.random() < cfg["candidate_prob"]:
+            new = rng.choice(cands[u])
+        elif rng.random() < 0.5:
+            r = min(rank[u], len(eng_rank) - 1)
+            lo, hi = max(0, r - cfg["rank_window"]), min(len(eng_rank) - 1, r + cfg["rank_window"])
+            new = eng_rank[rng.randint(lo, hi)]
         else:
-            if rng.random() < 0.5:
-                r = min(rank[u], len(eng_rank) - 1)
-                lo, hi = max(0, r - cfg["rank_window"]), min(len(eng_rank) - 1, r + cfg["rank_window"])
-                new = eng_rank[rng.randint(lo, hi)]
-            else:
-                new = rng.choice(eng_rank)
-            if new == key[u]:
-                continue
-            change = {u: new}
+            new = rng.choice(eng_rank)
+        if new == key[u]:
+            continue
+        change = {u: new}
+        others = holders[new] - {u}
+        if others:
+            change[rng.choice(sorted(others))] = key[u]
         affected = sorted(set().union(*(where[x] for x in change)))
         old = {x: key[x] for x in change}
         key.update(change)
@@ -222,6 +230,10 @@ def key_search(units_corpus, english, init_key, scorer, cfg, seed, log=print):
             cur[affected] = new_lp
             total += delta
             accepted += 1
+            for x, w in old.items():
+                holders[w].discard(x)
+            for x, w in change.items():
+                holders[w].add(x)
         else:
             key.update(old)
         if cfg.get("log_every") and (step + 1) % cfg["log_every"] == 0:

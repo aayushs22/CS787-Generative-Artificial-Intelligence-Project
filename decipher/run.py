@@ -66,26 +66,31 @@ def segment(method, texts, gold, cfg, alphabet_size, device, seed):
 class Decipherer:
     """Runs decipherment methods, building each English LM once."""
 
-    def __init__(self, english, cfg, device, seed):
+    def __init__(self, english, cfg, llm_cfg, data_max_len, device, seed, llm_dir):
         self.english, self.cfg, self.device, self.seed = english, cfg, device, seed
-        self._ngram, self._neural = {}, None
+        self._ngram = {}
+        self._llm_args = (llm_cfg, data_max_len, llm_dir)
+        self._llm = None
 
     def ngram(self, order):
         if order not in self._ngram:
             self._ngram[order] = NgramLM(self.english, order)
         return self._ngram[order]
 
-    def neural_scorer(self):
-        if self._neural is None:
-            from . import neural
+    @property
+    def llm(self):
+        if self._llm is None:
+            from .llm import LLM
 
-            c = self.cfg["neural_lm"]
-            vocab = neural.Vocab({w for s in self.english for w in s})
-            model = neural.build_model(len(vocab), c["model"])
-            neural.train_lm(model, [vocab.encode(s) for s in self.english], c["train"],
-                            self.device, self.seed, tag="word-lm")
-            self._neural = solve.NeuralScorer(model, vocab, self.device, c["score_batch_size"])
-        return self._neural
+            llm_cfg, data_max_len, llm_dir = self._llm_args
+            self._llm = LLM(self.english, llm_cfg, data_max_len, self.device, self.seed,
+                            llm_cfg.get("checkpoint_dir") or llm_dir)
+        return self._llm
+
+    def _init(self, units, cache, init):
+        if init not in cache:
+            cache[init] = self.run(init, units, cache)
+        return cache[init][0]
 
     def run(self, method, units, cache):
         cfg = self.cfg
@@ -98,15 +103,26 @@ class Decipherer:
             if order > 2:
                 raise ValueError("EM runs on a bigram HMM; use search_ngramN for higher orders")
             return solve.iterative_em(units, self.english, cfg["em"], order)
-        m = re.fullmatch(r"search_(ngram(\d)|neural)", method)
+        m = re.fullmatch(r"search_(ngram(\d)|neural|llm)", method)
         if m:
-            scorer = (self.neural_scorer() if m.group(1) == "neural"
-                      else solve.NgramScorer(self.ngram(int(m.group(2)))))
-            init = cfg["search"]["init"]
-            if init not in cache:
-                cache[init] = self.run(init, units, cache)
-            return solve.key_search(units, self.english, cache[init][0], scorer,
-                                    cfg["search"], self.seed)
+            sc = cfg["search"]
+            candidates = None
+            if m.group(1) == "llm":
+                from .llm import lm_candidates
+
+                scorer = self.llm.scorer()
+                candidates = lm_candidates(self.llm, sc["top_k"])
+            elif m.group(1) == "neural":
+                scorer = self.llm.scorer()  # same LM, but random proposals (ablation of search_llm)
+            else:
+                scorer = solve.NgramScorer(self.ngram(int(m.group(2))))
+            return solve.key_search(units, self.english, self._init(units, cache, sc["init"]), scorer,
+                                    sc, self.seed, candidates_fn=candidates)
+        if method == "llm_refine":
+            from .llm import llm_refine
+
+            rc = cfg["refine"]
+            return llm_refine(units, self.english, self._init(units, cache, rc["init"]), self.llm, rc, self.seed)
         raise ValueError(f"unknown decipherment method: {method}")
 
 
@@ -153,7 +169,7 @@ def main(argv=None):
               f"lexicon F={res['lexicon_f']:.3f} ({res['seconds']}s)", flush=True)
 
     # 3. decipherment
-    dec = Decipherer(english, dec_cfg, device, seed)
+    dec = Decipherer(english, dec_cfg, cfg.get("llm", {}), cfg["data"]["max_len"], device, seed, out / "llm")
     bands = [tuple(b) for b in cfg["evaluation"]["freq_bands"]]
     for seg_name in dec_cfg.get("segmentations") or list(segs):
         cache = {}
