@@ -64,10 +64,8 @@ python -m decipher.llm --config configs/x.yaml
 - **Gibbs samplers** use the corrected equations from Goldwater, Griffiths & Johnson (2009), because the 2006 appendix has typos in the bigram denominators. The bigram sampler replaces table counts with their expected values, as in the 2006 appendix. Both are written in pure Python, so expect minutes to hours per run at 10k+ sentences; porting the inner loop to numba is the obvious speed-up.
 - **Iterative EM** runs a bigram HMM, so `em` supports LM orders 1–2. Higher-order and neural LMs are used through key search. Forward–backward is batched over sentences of equal length, and Viterbi is restricted to a beam of candidate English words per cipher unit.
 - **Team code.** `decipher/models/` and `decipher/techniques/` are copied from the team's CS781 capstone code. Lines changed by Claude are marked `# FIX (Claude)`: package-relative imports, and `rope.py` passing a tensor to `torch.outer`. `neural.py`, `llm.py` and `inject.py` are plumbing written by Claude.
-- **Techniques not ported.** Prompt tuning, prefix tuning, AdaLoRA and QLoRA need extra trainer and model hooks (virtual tokens, prefix KV, rank-update callbacks, quantisation), so they are not wired in yet.
 - **Mixed precision.** The `amp: bf16 | fp16` path is only exercised on CUDA, so it has not been run in the CPU smoke tests.
 
 ## Not yet implemented (from the proposal)
 
 - §4.3 mapping a cipher unit to an English *word pair*. Currently, merged units can only map to a single word, and the alignment-based metrics count the resulting errors.
-- Stretch goals: embedding alignment, LM-infilling cleanup, many-to-one keys, joint segmentation–decipherment.
