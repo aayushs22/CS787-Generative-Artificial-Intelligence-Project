@@ -56,7 +56,7 @@ segmentation:
 
 decipherment:
   segmentations: null   # null = every segmentation above
-  methods: [freq, em, search_ngram2, search_ngram3, search_neural, search_llm, llm_refine]
+  methods: [freq, em, search_ngram2, search_ngram3, search_neural, search_llm, llm_refine, em_pairs, embed_align]
   em:
     lm_order: 2
     start_k: 20
@@ -68,6 +68,13 @@ decipherment:
     beam: 20
     batch_size: 256
     max_cipher_types: 500
+    pairs: 10             # em_pairs: number of English word-pair states
+  embed:                # embed_align
+    dim: 30
+    window: 2
+    max_types: 60
+    init_types: 60
+    iterations: 5
   search:
     init: em            # em | freq
     steps: 300

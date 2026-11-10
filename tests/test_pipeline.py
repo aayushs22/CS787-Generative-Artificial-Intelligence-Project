@@ -197,3 +197,41 @@ def test_checkpoint_roundtrip_and_kd(tmp_path, corpus):
     student = llm_mod.LLM(english, lc2, cfg["data"]["max_len"], "cpu", 0, tmp_path / "b")
     out = llm_mod.correct(student, [english[0], english[1]])
     assert [len(o) for o in out] == [len(english[0]), len(english[1])]
+
+
+def test_em_pairs_reduces_to_em_without_pairs_and_decodes_pairs(corpus):
+    cfg, plain, english, *_ = corpus
+    em_cfg = dict(cfg["decipherment"]["em"])
+    k0, d0 = solve.iterative_em([list(s) for s in plain[:60]], english, {**em_cfg, "pairs": 0}, 2)
+    k1, d1 = solve.iterative_em([list(s) for s in plain[:60]], english, {**em_cfg, "pairs": 0}, 2)
+    assert d0 == d1  # deterministic
+
+    # an under-segmented cipher: "the cat" always fused into a single unit
+    eng = [["the", "cat", "ran"], ["a", "dog", "ran"], ["the", "cat", "sat"]] * 30
+    units = [["P", "r"], ["a", "d", "r"]] * 30
+    key, dec = solve.iterative_em(units, eng, {**em_cfg, "pairs": 5, "start_k": 10, "step_k": 10,
+                                               "max_cipher_types": 10}, 2)
+    assert key["P"] == "the cat"
+    assert dec[0] == ["the", "cat", "ran"]
+
+
+def test_procrustes_recovers_rotation():
+    from decipher import embed
+
+    rng = np.random.default_rng(0)
+    X = rng.normal(size=(40, 8))
+    Q, _ = np.linalg.qr(rng.normal(size=(8, 8)))
+    Z = X @ Q
+    W = embed._procrustes(X, Z, [(i, i) for i in range(40)])
+    np.testing.assert_allclose(X @ W, Z, atol=1e-8)
+    assert embed._one_to_one(embed._csls(X @ W, Z, k=3)) == {i: i for i in range(40)}
+
+
+def test_embed_align_returns_one_to_one_key(corpus):
+    cfg, plain, english, vocab, key, texts, gold = corpus
+    from decipher.embed import embed_align
+
+    ec = {"dim": 30, "window": 2, "max_types": 60, "init_types": 60, "iterations": 3}
+    k, dec = embed_align(gold, english, ec, log=lambda *_: None)
+    assert len(set(k.values())) == len(k)
+    assert len(dec) == len(gold) and all(len(d) == len(g) for d, g in zip(dec, gold))

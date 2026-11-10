@@ -66,10 +66,35 @@ def _viterbi(obs, start, trans, end, B, beam):
     return [int(cands[t][j]) for t, j in enumerate(path)]
 
 
+def _pair_states(english, words, n_pairs):
+    """The `n_pairs` most frequent English bigrams whose words are both in `words`."""
+    ws = set(words)
+    c = Counter((a, b) for s in english for a, b in zip(s, s[1:]) if a in ws and b in ws)
+    return [p for p, _ in c.most_common(n_pairs)]
+
+
+def _expand(start_w, trans_w, end_w, widx, states):
+    """HMM over word states and English word-pair states (a, b). A pair state emits one
+    cipher unit but stands for two words (proposal 4.3), so its transition factors are
+    P(first | prev last word) and the internal P(b | a)."""
+    first = np.array([widx[s[0] if isinstance(s, tuple) else s] for s in states])
+    last = np.array([widx[s[1] if isinstance(s, tuple) else s] for s in states])
+    inner = np.array([trans_w[widx[s[0]], widx[s[1]]] if isinstance(s, tuple) else 1.0 for s in states])
+    return (start_w[first] * inner, trans_w[np.ix_(last, first)] * inner[None, :], end_w[last])
+
+
+def _words_of(state):
+    return list(state) if isinstance(state, tuple) else [state]
+
+
 def iterative_em(units_corpus, english, cfg, lm_order, log=print):
     """Grow the channel over the most frequent types; fix confident mappings
     (P(c|e) > fix_threshold) between stages; decode with Viterbi using
-    P(e) * P(c|e)^stretch. Returns (key, decoded)."""
+    P(e) * P(c|e)^stretch. Returns (key, decoded).
+
+    If cfg["pairs"] = P > 0, the HMM also has P English word-pair states, so a cipher
+    unit may map to a word pair (an under-segmented unit). Such keys are returned as
+    the string "w1 w2"; decoded sentences are flattened to words."""
     eng_rank = _ranked(english)
     cip_rank = _ranked(units_corpus)[: cfg["max_cipher_types"]]
     uniq = Counter(tuple(s) for s in units_corpus)
@@ -78,15 +103,17 @@ def iterative_em(units_corpus, english, cfg, lm_order, log=print):
     k = cfg["start_k"]
     while True:
         k_e, k_c = min(k, len(eng_rank)), min(k, len(cip_rank))
-        states = eng_rank[:k_e] + [UNK]
+        words = eng_rank[:k_e] + [UNK]
+        states = words + _pair_states(english, eng_rank[:k_e], cfg.get("pairs", 0))
         e_idx = {w: i for i, w in enumerate(states)}
         cunits = cip_rank[:k_c]
         c_idx = {u: i for i, u in enumerate(cunits)}
         C, S = len(cunits) + 1, len(states)  # last column = unknown cipher unit
 
-        mapped = [[w if w in e_idx else UNK for w in s] for s in english]
-        lm = NgramLM(mapped, lm_order, vocab=states)
-        start, trans, end = lm.bigram_matrices(states)
+        wset = set(words)
+        mapped = [[w if w in wset else UNK for w in s] for s in english]
+        lm = NgramLM(mapped, lm_order, vocab=words)
+        start, trans, end = _expand(*lm.bigram_matrices(words), {w: i for i, w in enumerate(words)}, states)
 
         B = np.full((S, C), 1.0 / C)
         fixed_rows = {}
@@ -117,10 +144,12 @@ def iterative_em(units_corpus, english, cfg, lm_order, log=print):
             for r, c in fixed_rows.items():
                 B_new[r] = B[r]
             B = B_new
-        n_conf = int((B[:-1].max(1) > cfg["fix_threshold"]).sum())
+        n_conf = sum(B[r].max() > cfg["fix_threshold"] for r in range(S) if states[r] != UNK)
         log(f"  [em] stage k={k}: {S} plain x {C} cipher types, {n_conf} confident mappings")
 
-        for r in range(S - 1):
+        for r in range(S):
+            if states[r] == UNK:
+                continue
             c = int(B[r].argmax())
             if B[r, c] > cfg["fix_threshold"] and c < C - 1:
                 fixed[states[r]] = cunits[c]
@@ -134,10 +163,9 @@ def iterative_em(units_corpus, english, cfg, lm_order, log=print):
     for s in units_corpus:
         obs = [c_idx.get(u, C - 1) for u in s]
         path = _viterbi(obs, start, trans, end, Bs, cfg["beam"])
-        words = [states[j] for j in path]
-        decoded.append(words)
-        for u, w in zip(s, words):
-            votes[u][w] += 1
+        decoded.append([w for j in path for w in _words_of(states[j])])
+        for u, j in zip(s, path):
+            votes[u][" ".join(_words_of(states[j]))] += 1
     key = {u: v.most_common(1)[0][0] for u, v in votes.items()}
     return key, decoded
 

@@ -15,7 +15,7 @@ TinyStories, sentences of 3–12 words, 20-symbol alphabet, code lengths 1–5. 
 **Caveats.** Only the 1k setting has three seeds; every other cell is a single run. Learned-segmenter results vary a lot between seeds
 (at 1k with EM: `hdp_bigram` 0.13 / 0.40 / 0.24 and `charlm` 0.17 / 0.11 / 0.09 for seeds 0 / 1 / 2), so segmenter rankings and anything
 involving them are suggestive only. Samplers, the char-LM and the other models were not tuned (Gibbs: 100 iterations at every corpus size, which is probably
-too few for 20k sentences). The embedding-alignment stretch goal and §4.3 word-pair keys were not implemented. The `perturbed`/`entropy` segmenters and `search_ngram3`/`search_llm` were run only in `n500_c1000`.
+too few for 20k sentences). The `perturbed`/`entropy` segmenters and `search_ngram3`/`search_llm` were run only in `n500_c1000`.
 
 ## Findings by research question
 
@@ -31,6 +31,22 @@ too few for 20k sentences). The embedding-alignment stretch goal and §4.3 word-
 ## Bug fixed while running these
 
 At 20k sentences the HDP bigram sampler crashed (`TypeError: '<' not supported between 'complex' and 'float'`). Accumulated float error left an expected table count slightly negative (about −2e-16); for rare long units the prior term is ~1e-27, so the probability went negative and annealing (`p ** (1/temp)`) made it complex. `decipher/segment/gibbs.py` now clamps that count at 0. The 1k and 5k runs completed without hitting this; I did not rerun them after the fix.
+
+## Stretch goals: word-pair keys (§4.3) and embedding alignment
+
+Runs `ext_c1000_s{0,1,2}`, `ext_c5000`, `ext_c20000` (same data and seeds as the `n500_*` runs; `ext_c20000` skips `hdp_bigram`). Token accuracy:
+
+| setting | seg | em | em_pairs (50 pair states) | embed_align |
+|---|---|---|---|---|
+| 1k, seeds 0/1/2 | oracle | .884 / .889 / .887 | .717 / .762 / .770 | .059 / .067 / .044 |
+| 1k, seeds 0/1/2 | dp_unigram | .394 / .553 / .397 | .550 / .690 / .601 | .018 / .031 / .023 |
+| 5k | oracle | .968 | .888 | .109 |
+| 5k | dp_unigram | .200 | .256 | .024 |
+| 20k | oracle | .985 | .904 | .600 |
+| 20k | dp_unigram | .083 | .070 | .025 |
+
+- **Word-pair keys help when units are fused and hurt otherwise.** With DP unigram segmentation at 1k, `em_pairs` is better than `em` in all three seeds, by 14–20 points. With oracle boundaries it costs 11–17 points, because the extra pair states add spurious alternatives. At 5k the gain is smaller (+5.6) and at 20k it is gone (−1.3). With HDP and char-LM boundaries it is mixed (e.g. HDP at 1k: +4.5, −19.5, −8.7 points for seeds 0/1/2). The number of pair states (50) was not tuned and the method has no way to decide per unit whether a pair is warranted, so it cannot be a default.
+- **Embedding alignment is weak at this scale.** Below the frequency baseline (0.23–0.29) at 1k and 5k even with oracle boundaries, 0.60 at 20k (above the frequency baseline of 0.39, far below EM's 0.985), and near zero with learned segmentation. It needs far more cipher data than EM. Its settings (dim 30, 300 types, 100 init types) were picked by trying four combinations on the 5k and 20k oracle data, i.e. on the evaluation data, so the 20k number is optimistic; results are single-run.
 
 ## Tables
 
@@ -177,3 +193,61 @@ At 20k sentences the HDP bigram sampler crashed (`TypeError: '<' not supported b
 | dp_unigram | 0.105 | 0.156 | 0.150 | 0.158 | 0.174 |
 | hdp_bigram | 0.022 | 0.384 | 0.379 | 0.359 | 0.397 |
 | charlm | 0.056 | 0.143 | 0.146 | 0.152 | 0.146 |
+
+### runs/ext_c1000_s0
+
+**Segmentation**
+
+| method | boundary F | token F | lexicon F |
+|---|---|---|---|
+| oracle | 1.000 | 1.000 | 1.000 |
+| dp_unigram | 0.811 | 0.646 | 0.642 |
+| hdp_bigram | 0.785 | 0.556 | 0.508 |
+| charlm | 0.598 | 0.367 | 0.259 |
+
+**Decipherment token accuracy (rows: segmentation)**
+
+| seg | em | em_pairs | embed_align |
+|---|---|---|---|
+| oracle | 0.884 | 0.717 | 0.059 |
+| dp_unigram | 0.394 | 0.550 | 0.018 |
+| hdp_bigram | 0.125 | 0.170 | 0.035 |
+| charlm | 0.166 | 0.127 | 0.005 |
+
+### runs/ext_c5000
+
+**Segmentation**
+
+| method | boundary F | token F | lexicon F |
+|---|---|---|---|
+| oracle | 1.000 | 1.000 | 1.000 |
+| dp_unigram | 0.782 | 0.561 | 0.665 |
+| hdp_bigram | 0.764 | 0.561 | 0.545 |
+| charlm | 0.720 | 0.527 | 0.217 |
+
+**Decipherment token accuracy (rows: segmentation)**
+
+| seg | em | em_pairs | embed_align |
+|---|---|---|---|
+| oracle | 0.968 | 0.888 | 0.109 |
+| dp_unigram | 0.200 | 0.256 | 0.024 |
+| hdp_bigram | 0.325 | 0.112 | 0.011 |
+| charlm | 0.341 | 0.195 | 0.018 |
+
+### runs/ext_c20000
+
+**Segmentation**
+
+| method | boundary F | token F | lexicon F |
+|---|---|---|---|
+| oracle | 1.000 | 1.000 | 1.000 |
+| dp_unigram | 0.700 | 0.402 | 0.436 |
+| charlm | 0.713 | 0.541 | 0.120 |
+
+**Decipherment token accuracy (rows: segmentation)**
+
+| seg | em | em_pairs | embed_align |
+|---|---|---|---|
+| oracle | 0.985 | 0.904 | 0.600 |
+| dp_unigram | 0.083 | 0.070 | 0.025 |
+| charlm | 0.417 | 0.394 | 0.011 |

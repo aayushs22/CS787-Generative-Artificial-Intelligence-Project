@@ -36,7 +36,7 @@ Each run writes to `output_dir`:
 | Data | `toy`, `tinystories`, text file; disjoint cipher/English pools; top-N vocabulary filter | [decipher/data.py](decipher/data.py) |
 | Cipher | random-length codes (`length_mode: random`) or length-correlated ablation (`correlated`) | [decipher/cipher.py](decipher/cipher.py) |
 | Segmentation | `oracle`, `perturbed` (controlled merge/split rate), `entropy` (branching entropy), `dp_unigram` and `hdp_bigram` (Goldwater et al. 2006 Gibbs samplers), `charlm` (neural char-LM entropy) | [decipher/segment/](decipher/segment/) |
-| Decipherment | `freq` (rank matching), `em` / `em1` / `em2` (Iterative EM, Ravi & Knight 2011 §2.1), `search_ngramN` (annealed key search scored by an N-gram LM), `search_neural` (same search scored by the LLM, random proposals), `search_llm` (LLM-proposed candidates + LLM scoring), `llm_refine` (LLM corrector + type-level vote) | [decipher/solve.py](decipher/solve.py), [decipher/llm.py](decipher/llm.py) |
+| Decipherment | `freq` (rank matching), `em` / `em1` / `em2` (Iterative EM, Ravi & Knight 2011 §2.1), `search_ngramN` (annealed key search scored by an N-gram LM), `search_neural` (same search scored by the LLM, random proposals), `search_llm` (LLM-proposed candidates + LLM scoring), `llm_refine` (LLM corrector + type-level vote), `em_pairs` (EM whose HMM also has English word-pair states, so a unit can map to two words; §4.3), `embed_align` (PPMI-SVD embeddings on each side, unsupervised alignment, one-to-one key) | [decipher/solve.py](decipher/solve.py), [decipher/llm.py](decipher/llm.py), [decipher/embed.py](decipher/embed.py) |
 | LMs | Witten–Bell word n-gram; the team's decoder-only LMs (`decoder1` MHA, `decoder3` GQA/RoPE) | [decipher/ngram.py](decipher/ngram.py), [decipher/models/](decipher/models/) |
 | Fine-tuning | the team's techniques: `full_ft`, `lora`, `lorma`, `rslora`, `bitfit`, `partial_ft`, `ia3`, `adapters`, plus `kd` loss | [decipher/techniques/](decipher/techniques/) |
 | Metrics | boundary / token / lexicon P-R-F; aligned token accuracy, normalised edit distance, sentence accuracy, vocabulary recovery per frequency band | [decipher/metrics.py](decipher/metrics.py) |
@@ -66,9 +66,11 @@ python -m decipher.llm --config configs/x.yaml
 - **Team code.** `decipher/models/` and `decipher/techniques/` are copied from the team's CS781 capstone code. Lines changed by Claude are marked `# FIX (Claude)`: package-relative imports, and `rope.py` passing a tensor to `torch.outer`. `neural.py`, `llm.py` and `inject.py` are plumbing written by Claude.
 - **Mixed precision.** The `amp: bf16 | fp16` path is only exercised on CUDA, so it has not been run in the CPU smoke tests.
 
-## Not yet implemented (from the proposal)
+## Notes on the two stretch goals
 
-- §4.3 mapping a cipher unit to an English *word pair*. Currently, merged units can only map to a single word, and the alignment-based metrics count the resulting errors.
+- **`em_pairs` (§4.3).** `em.pairs` sets how many English word-pair states (most frequent bigrams) are added to the HMM; plain `em` ignores it. A pair-mapped unit appears in `key` as the string `"w1 w2"`, and decoded sentences are flattened to words. Only the pair mapping is implemented; there is no `UNK`-for-unit option beyond the existing fallback.
+- **`embed_align`.** Deviates from the proposal: initialisation uses sorted self-similarity profiles (Artetxe et al., 2018) instead of Conneau et al.'s adversarial training; refinement is iterative Procrustes with CSLS and a one-to-one assignment. It needs `scipy`. It is weak on small corpora (see RESULTS.md).
+- Still not implemented: joint segmentation–decipherment over a segmentation lattice (a stretch goal in the proposal).
 
 ## Experiments
 

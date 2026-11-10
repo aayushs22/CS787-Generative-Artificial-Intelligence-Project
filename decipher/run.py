@@ -97,12 +97,19 @@ class Decipherer:
         if method == "freq":
             key = solve.frequency_key(units, self.english)
             return key, solve.decode(units, key)
+        if method == "em_pairs":  # EM whose HMM also has English word-pair states (proposal 4.3)
+            return solve.iterative_em(units, self.english, {**cfg["em"], "pairs": cfg["em"].get("pairs", 50)},
+                                      cfg["em"]["lm_order"])
+        if method == "embed_align":  # unsupervised embedding alignment (proposal 4.2 stretch)
+            from .embed import embed_align
+
+            return embed_align(units, self.english, cfg["embed"])
         m = re.fullmatch(r"em(\d)?", method)
         if m:
             order = int(m.group(1) or cfg["em"]["lm_order"])
             if order > 2:
                 raise ValueError("EM runs on a bigram HMM; use search_ngramN for higher orders")
-            return solve.iterative_em(units, self.english, cfg["em"], order)
+            return solve.iterative_em(units, self.english, {**cfg["em"], "pairs": 0}, order)  # em.pairs is for em_pairs only
         m = re.fullmatch(r"search_(ngram(\d)|neural|llm)", method)
         if m:
             sc = cfg["search"]
