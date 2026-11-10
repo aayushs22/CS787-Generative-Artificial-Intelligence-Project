@@ -94,8 +94,10 @@ class GibbsSegmenter:
         if w == END:
             return (t_end + self.tau / 2) / (self.T + self.tau)
         t_sig = self.T - t_end
+        # clamp: accumulated float error can leave expected table counts slightly negative,
+        # which makes rare-unit probabilities negative (and complex after annealing)
         return ((t_sig + self.tau / 2) / (self.T + self.tau)
-                * (self.t[w] + self.a0 * self.p0(w)) / (t_sig + self.a0))
+                * (max(self.t[w], 0.0) + self.a0 * self.p0(w)) / (t_sig + self.a0))
 
     def _p2(self, w, u, num=0, den=0):
         return (self.nb[(u, w)] + num + self.a1 * self._p1(w)) / (self.nc[u] + den + self.a1)

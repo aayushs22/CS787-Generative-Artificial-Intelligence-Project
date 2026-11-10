@@ -1,0 +1,162 @@
+cipher:
+  alphabet_size: 20
+  length_mode: random
+  max_code_len: 5
+  min_code_len: 1
+data:
+  cipher_fraction: 0.5
+  max_len: 12
+  max_sentences: 3000
+  max_stories: 20000
+  min_len: 3
+  n_cipher_sentences: 1000
+  n_english_sentences: 20000
+  source: tinystories
+  vocab_size: 500
+decipherment:
+  em:
+    batch_size: 256
+    beam: 20
+    fix_threshold: 0.5
+    iterations: 8
+    lm_order: 2
+    max_cipher_types: 600
+    smoothing: 0.001
+    start_k: 50
+    step_k: 50
+    stretch: 3
+  methods:
+  - freq
+  - em
+  - search_ngram2
+  - search_neural
+  - llm_refine
+  refine:
+    init: em
+    max_sentences: 300
+    min_share: 0.3
+    rounds: 3
+  search:
+    candidate_prob: 0.8
+    init: em
+    log_every: 0
+    max_sentences: 300
+    rank_window: 5
+    refresh_every: 1000
+    steps: 5000
+    t_end: 0.05
+    t_start: 1.0
+    top_k: 10
+  segmentations: null
+device: cpu
+evaluation:
+  freq_bands:
+  - - 1
+    - 1
+  - - 2
+    - 9
+  - - 10
+    - null
+llm:
+  checkpoint_dir: null
+  corrector:
+    amp: none
+    batch_size: 64
+    corrupt_max: 0.5
+    corrupt_min: 0.1
+    eval_every: 500
+    grad_clip: 1.0
+    kd: null
+    log_every: 0
+    lr: 0.003
+    min_lr: 0.0003
+    rank_window: 5
+    steps: 1500
+    technique:
+      alpha: 8
+      name: lora
+      r: 8
+      targets:
+      - q_proj
+      - v_proj
+    val_fraction: 0.1
+    warmup_steps: 100
+    weight_decay: 0.0
+  model:
+    arch: decoder3
+    d_ff: 384
+    d_model: 128
+    dropout: 0.0
+    max_seq_len: 32
+    n_heads: 4
+    n_kv_heads: 2
+    n_layers: 4
+    norm_first: true
+    pos_emb_type: rope
+  pretrain:
+    amp: none
+    batch_size: 64
+    eval_every: 500
+    grad_clip: 1.0
+    log_every: 0
+    lr: 0.003
+    min_lr: 0.0003
+    steps: 3000
+    val_fraction: 0.1
+    warmup_steps: 100
+    weight_decay: 0.0
+  reuse_checkpoints: true
+  score_batch_size: 256
+output_dir: runs/n500_c1000_s1
+seed: 1
+segmentation:
+  charlm:
+    model:
+      arch: decoder3
+      d_ff: 256
+      d_model: 96
+      dropout: 0.0
+      max_seq_len: 96
+      n_heads: 4
+      n_kv_heads: 2
+      n_layers: 3
+      norm_first: true
+      pos_emb_type: rope
+    quantile: 0.5
+    train:
+      amp: none
+      batch_size: 64
+      grad_clip: 1.0
+      log_every: 0
+      lr: 0.003
+      min_lr: 0.0003
+      steps: 1500
+      warmup_steps: 100
+      weight_decay: 0.0
+  dp_unigram:
+    alpha0: 20
+    anneal_start_temp: 5
+    anneal_steps: 10
+    init_boundary_prob: 0.5
+    iterations: 100
+    p_stop: 0.5
+    tau: 2
+  entropy:
+    context: 2
+    quantile: 0.5
+  hdp_bigram:
+    alpha0: 100
+    alpha1: 10
+    anneal_start_temp: 5
+    anneal_steps: 10
+    init_boundary_prob: 0.5
+    iterations: 100
+    p_stop: 0.5
+    tau: 2
+  methods:
+  - oracle
+  - dp_unigram
+  - hdp_bigram
+  - charlm
+  perturbed:
+    rate: 0.1

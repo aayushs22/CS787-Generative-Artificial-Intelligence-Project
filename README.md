@@ -69,3 +69,7 @@ python -m decipher.llm --config configs/x.yaml
 ## Not yet implemented (from the proposal)
 
 - §4.3 mapping a cipher unit to an English *word pair*. Currently, merged units can only map to a single word, and the alignment-based metrics count the resulting errors.
+
+## Experiments
+
+The `configs/n*.yaml` files hold the TinyStories runs; results and caveats are in [RESULTS.md](RESULTS.md). `python -m decipher.report runs/<dir>` prints the tables.

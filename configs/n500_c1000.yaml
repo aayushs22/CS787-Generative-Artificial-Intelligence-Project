@@ -1,0 +1,166 @@
+seed: 0
+output_dir: runs/n500_c1000
+device: cpu
+data:
+  source: tinystories
+  max_sentences: 3000
+  max_stories: 20000
+  min_len: 3
+  max_len: 12
+  cipher_fraction: 0.5
+  vocab_size: 500
+  n_cipher_sentences: 1000
+  n_english_sentences: 20000
+cipher:
+  alphabet_size: 20
+  min_code_len: 1
+  max_code_len: 5
+  length_mode: random
+segmentation:
+  methods:
+  - oracle
+  - perturbed
+  - entropy
+  - dp_unigram
+  - hdp_bigram
+  - charlm
+  perturbed:
+    rate: 0.1
+  entropy:
+    context: 2
+    quantile: 0.5
+  dp_unigram:
+    alpha0: 20
+    p_stop: 0.5
+    tau: 2
+    iterations: 100
+    anneal_start_temp: 5
+    anneal_steps: 10
+    init_boundary_prob: 0.5
+  hdp_bigram:
+    alpha0: 100
+    alpha1: 10
+    p_stop: 0.5
+    tau: 2
+    iterations: 100
+    anneal_start_temp: 5
+    anneal_steps: 10
+    init_boundary_prob: 0.5
+  charlm:
+    quantile: 0.5
+    model:
+      arch: decoder3
+      d_model: 96
+      n_layers: 3
+      n_heads: 4
+      n_kv_heads: 2
+      d_ff: 256
+      max_seq_len: 96
+      dropout: 0.0
+      pos_emb_type: rope
+      norm_first: true
+    train:
+      steps: 1500
+      batch_size: 64
+      lr: 0.003
+      min_lr: 0.0003
+      warmup_steps: 100
+      weight_decay: 0.0
+      grad_clip: 1.0
+      amp: none
+      log_every: 0
+decipherment:
+  segmentations: null
+  methods:
+  - freq
+  - em
+  - search_ngram2
+  - search_ngram3
+  - search_neural
+  - search_llm
+  - llm_refine
+  em:
+    lm_order: 2
+    start_k: 50
+    step_k: 50
+    iterations: 8
+    fix_threshold: 0.5
+    smoothing: 0.001
+    stretch: 3
+    beam: 20
+    batch_size: 256
+    max_cipher_types: 600
+  search:
+    init: em
+    steps: 20000
+    t_start: 1.0
+    t_end: 0.05
+    max_sentences: 300
+    rank_window: 5
+    top_k: 10
+    refresh_every: 1000
+    candidate_prob: 0.8
+    log_every: 0
+  refine:
+    init: em
+    rounds: 3
+    max_sentences: 300
+    min_share: 0.3
+llm:
+  checkpoint_dir: null
+  reuse_checkpoints: true
+  score_batch_size: 256
+  model:
+    arch: decoder3
+    d_model: 128
+    n_layers: 4
+    n_heads: 4
+    n_kv_heads: 2
+    d_ff: 384
+    max_seq_len: 32
+    dropout: 0.0
+    pos_emb_type: rope
+    norm_first: true
+  pretrain:
+    steps: 3000
+    batch_size: 64
+    lr: 0.003
+    min_lr: 0.0003
+    warmup_steps: 100
+    weight_decay: 0.0
+    grad_clip: 1.0
+    amp: none
+    eval_every: 500
+    val_fraction: 0.1
+    log_every: 0
+  corrector:
+    technique:
+      name: lora
+      r: 8
+      alpha: 8
+      targets:
+      - q_proj
+      - v_proj
+    kd: null
+    corrupt_min: 0.1
+    corrupt_max: 0.5
+    rank_window: 5
+    steps: 1500
+    batch_size: 64
+    lr: 0.003
+    min_lr: 0.0003
+    warmup_steps: 100
+    weight_decay: 0.0
+    grad_clip: 1.0
+    amp: none
+    eval_every: 500
+    val_fraction: 0.1
+    log_every: 0
+evaluation:
+  freq_bands:
+  - - 1
+    - 1
+  - - 2
+    - 9
+  - - 10
+    - null
