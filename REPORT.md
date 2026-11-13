@@ -4,7 +4,7 @@ CS787: Generative Artificial Intelligence — final report
 
 ## Abstract
 
-We study whether an unknown text can be deciphered when even its word boundaries are missing, and whether neural generative models make this easier than the classical Bayesian and n-gram approaches. English text from TinyStories is enciphered by replacing each word type with a random variable-length symbol code and deleting word boundaries. The system sees only the unsegmented cipher and a separate, non-parallel English corpus. We build a two-stage pipeline: unsupervised word segmentation (Dirichlet-process and hierarchical-Dirichlet-process samplers, an entropy heuristic, and a neural character language model) followed by key recovery (frequency matching, iterative EM with an n-gram LM, annealed key search with n-gram and neural scorers, and an LLM-based corrector). With oracle boundaries, EM already recovers 89–99% of tokens, and an LLM corrector adds one to two points on top. With learned boundaries, accuracy collapses to 8–55%. **Segmentation quality, not the strength of the English prior, is the dominant limit on end-to-end recovery.**
+We study whether an unknown text can be deciphered when even its word boundaries are missing, and whether neural generative models make this easier than the classical Bayesian and n-gram approaches. English text from TinyStories is enciphered by replacing each word type with a random variable-length symbol code and deleting word boundaries. The system sees only the unsegmented cipher and a separate, non-parallel English corpus. We build a two-stage pipeline: unsupervised word segmentation (Dirichlet-process and hierarchical-Dirichlet-process samplers, an entropy heuristic, and a neural character language model) followed by key recovery (frequency matching, iterative EM with an n-gram LM, EM with word-pair states, embedding alignment, annealed key search with n-gram and neural scorers, and an LLM-based corrector). With oracle boundaries, EM already recovers 89–99% of tokens, and an LLM corrector adds one to two points on top. With learned boundaries, accuracy collapses to 8–55%. **Segmentation quality, not the strength of the English prior, is the dominant limit on end-to-end recovery.**
 
 ## 1. Introduction
 
@@ -40,6 +40,9 @@ Machine translation normally needs parallel data or a dictionary. For low-resour
 - **Iterative EM** (Ravi and Knight, 2011, §2.1). An HMM whose transitions are a fixed English bigram LM (Witten–Bell) and whose emissions are the unknown channel P(c|e). The channel is grown over the most frequent types, confident mappings are fixed between stages, and the final key comes from beam-restricted Viterbi decoding.
 - **Key search.** Starting from the EM key, simulated annealing proposes reassignments and swaps that keep the key one-to-one; each candidate is scored by an English LM on a fixed sample of decoded sentences. Scorers: bigram LM (`search_ngram2`), trigram LM (`search_ngram3`), and a neural LM with random proposals (`search_neural`). `search_llm` draws proposals from the neural LM's next-word distribution instead.
 - **LLM refinement** (`llm_refine`). A single from-scratch decoder-only LM is pretrained on the English corpus. It is then fine-tuned (LoRA) as a *corrector* that maps a noisily decoded sentence to a clean one, where noise swaps a random share of word types with words of similar frequency rank. At test time the corrector rewrites every decoded sentence; each cipher unit takes the word it was most often corrected to (one-to-one, greedy by votes), and the new key is kept only if the LM score improves. The LM never sees cipher text or the key.
+
+- **Word-pair keys** (`em_pairs`, proposal §4.3). Segmentation can fuse two frequent words into one unit. This variant of EM adds the 50 most frequent English bigrams as extra HMM states; a pair state emits a single cipher unit but decodes to two words, with transition factors P(first word | previous word) and the internal P(second | first). A pair-mapped unit appears in the key as `"w1 w2"`, and decoded sentences are flattened to words. With 0 pair states it reduces to plain EM.
+- **Embedding alignment** (`embed_align`). Word embeddings (PPMI + SVD, 30 dimensions) are trained independently on the segmented cipher and on English, and aligned without any dictionary: an initial dictionary comes from sorted self-similarity profiles (Artetxe et al., 2018), then iterative Procrustes refinement with CSLS retrieval (Conneau et al., 2018), and a final one-to-one assignment gives the key. Unlike the proposal, initialisation is not adversarial.
 
 ### 3.3 Metrics
 
@@ -117,12 +120,30 @@ With oracle boundaries, EM accuracy rises from 0.89 (1k) to 0.97 (5k) to 0.985 (
 
 With length-correlated codes the oracle result is unchanged (EM 0.884), and segmentation F moves by only a few points (char-LM boundary F 0.60 → 0.57, DP 0.81 → 0.77, HDP 0.79 → 0.76). Downstream accuracy under learned segmentation moves in both directions by amounts as large as seed-to-seed variation (DP+EM 0.39 → 0.16, HDP+EM 0.13 → 0.38), so we find no clear evidence either way that code length leaks into the segmenter.
 
+### 4.6 Word-pair keys and embedding alignment
+
+Token accuracy; runs reuse the same data and seeds as above (the 20k run omits `hdp_bigram`):
+
+| setting | segmentation | em | em_pairs | embed_align |
+|---|---|---|---|---|
+| 1k, seeds 0 / 1 / 2 | oracle | .884 / .889 / .887 | .717 / .762 / .770 | .059 / .067 / .044 |
+| 1k, seeds 0 / 1 / 2 | dp_unigram | .394 / .553 / .397 | .550 / .690 / .601 | .018 / .031 / .023 |
+| 5k | oracle | .968 | .888 | .109 |
+| 5k | dp_unigram | .200 | .256 | .024 |
+| 20k | oracle | .985 | .904 | .600 |
+| 20k | dp_unigram | .083 | .070 | .025 |
+
+**Word-pair keys help when units are fused and hurt otherwise.** With DP unigram segmentation at 1k, `em_pairs` beats `em` in all three seeds, by 14–20 points. With oracle boundaries it costs 11–17 points, because the extra pair states add spurious alternatives. At 5k the gain with DP is smaller (+5.6) and at 20k it disappears (−1.3). With HDP and character-LM boundaries the effect is mixed (HDP at 1k: +4.5, −19.5, −8.7 for seeds 0/1/2). The number of pair states was not tuned, and the method has no way to decide per unit whether a pair is warranted.
+
+**Embedding alignment is weak at this scale.** Even with oracle boundaries it is below the frequency baseline (0.23–0.29) at 1k and 5k, reaches 0.60 at 20k (above the frequency baseline of 0.39 but far below EM's 0.985), and is near zero under learned segmentation. It needs far more cipher data than EM. Its settings (30 dimensions, 300 types, 100 initialisation types) were chosen by trying four combinations on the 5k and 20k oracle data, i.e. on evaluation data, so the 20k figure is optimistic.
+
 ## 5. Discussion
 
 The central hypothesis was that stronger priors improve both stages, but that segmentation errors remain the main bottleneck. The evidence supports the second half firmly and the first half only weakly:
 
 - **Segmentation is the bottleneck.** The gap between oracle and learned boundaries (tens of points) dwarfs every difference between decipherment priors (about one to two points). It also persists as data grows.
 - **A neural prior helps, a little.** The LLM corrector is the best decipherment method with clean boundaries, but its margin over a bigram EM is small and we measured it on a task where EM is already strong.
+- **Handling segmentation errors in the key helps only in the matching regime.** Word-pair keys recover part of the loss when a segmenter fuses words (DP unigram at small scale) and cost accuracy when boundaries are already right.
 - **A neural prior for segmentation did not help at small scale.** The character LM was the worst segmenter at 1k sentences and only became competitive at 5k–20k, where it produced the best end-to-end accuracy among learned segmenters (0.34 at 5k and 0.42 at 20k with EM) despite poor lexicon F.
 
 ## 6. Limitations
@@ -132,11 +153,12 @@ The central hypothesis was that stronger priors improve both stages, but that se
 - **Controlled upper bound.** The key is a one-to-one relabelling of English, so these numbers bound what is achievable on real languages, which add non-deterministic translation, reordering and morphology.
 - **Key search start.** Key search and refinement start from the EM key, so they can only improve on what EM finds.
 - **Scale.** The LM and corrector are small (about a million parameters or fewer) and trained for a few thousand steps on a laptop CPU.
+- **Embedding alignment** uses a non-adversarial initialisation and settings picked on evaluation data (§4.6).
 - **Not tested.** The effect of scarce cipher data (below 1,000 sentences) on the neural advantage.
 
 ## 7. Implementation and reproducibility
 
-All code is in `decipher/`; the pipeline is `python -m decipher.run --config configs/<name>.yaml`, and results tables are produced by `python -m decipher.report runs/<name>`. The configs used here are `configs/n500_c1000.yaml`, `n500_c1000_s1.yaml`, `n500_c1000_s2.yaml`, `n500_c5000.yaml`, `n500_c20000.yaml`, `n2000_c5000.yaml` and `n500_c1000_corr.yaml`. `configs/smoke.yaml` is a toy configuration for quick checks; its values are placeholders. The test suite (`pytest tests`) covers forward–backward against brute force, Gibbs count consistency, the metrics, the LM and the fine-tuning techniques.
+All code is in `decipher/`; the pipeline is `python -m decipher.run --config configs/<name>.yaml`, and results tables are produced by `python -m decipher.report runs/<name>`. The configs used here are `configs/n500_c1000.yaml`, `n500_c1000_s1.yaml`, `n500_c1000_s2.yaml`, `n500_c5000.yaml`, `n500_c20000.yaml`, `n2000_c5000.yaml` and `n500_c1000_corr.yaml`; the word-pair and embedding-alignment runs use `ext_c1000_s0.yaml`, `ext_c1000_s1.yaml`, `ext_c1000_s2.yaml`, `ext_c5000.yaml` and `ext_c20000.yaml`. Embedding alignment needs `scipy`. `configs/smoke.yaml` is a toy configuration for quick checks; its values are placeholders. The test suite (`pytest tests`) covers forward–backward against brute force, Gibbs count consistency, the metrics, word-pair EM, embedding alignment, the LM and the fine-tuning techniques.
 
 Two points about the code base. The decoder models and fine-tuning techniques (`decipher/models/`, `decipher/techniques/`) come from the team's earlier capstone code, with the small fixes marked `# FIX (Claude)`. And while running the 20k-sentence experiment we found and fixed a numerical bug in the HDP sampler: accumulated floating-point error left an expected table count slightly negative, which made rare-unit probabilities negative and, under annealing, complex-valued. The count is now clamped at zero; the 1k and 5k runs completed without hitting the bug and were not rerun.
 
@@ -145,4 +167,6 @@ Two points about the code base. The decoder models and fine-tuning techniques (`
 - Goldwater, S., Griffiths, T. L., & Johnson, M. (2006). Contextual Dependencies in Unsupervised Word Segmentation. *ACL 2006*.
 - Goldwater, S., Griffiths, T. L., & Johnson, M. (2009). A Bayesian framework for word segmentation: Exploring the effects of context. *Cognition* 112(1).
 - Ravi, S., & Knight, K. (2011). Deciphering Foreign Language. *ACL-HLT 2011*.
+- Artetxe, M., Labaka, G., & Agirre, E. (2018). A robust self-learning method for fully unsupervised cross-lingual mappings of word embeddings. *ACL 2018*.
+- Conneau, A., Lample, G., Ranzato, M., Denoyer, L., & Jégou, H. (2018). Word Translation Without Parallel Data. *ICLR 2018*.
 - Eldan, R., & Li, Y. (2023). TinyStories: How Small Can Language Models Be and Still Speak Coherent English? arXiv:2305.07759.

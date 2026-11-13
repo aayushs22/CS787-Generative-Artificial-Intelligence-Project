@@ -97,10 +97,10 @@ class Decipherer:
         if method == "freq":
             key = solve.frequency_key(units, self.english)
             return key, solve.decode(units, key)
-        if method == "em_pairs":  # EM whose HMM also has English word-pair states
+        if method == "em_pairs":  # EM whose HMM also has English word-pair states (proposal 4.3)
             return solve.iterative_em(units, self.english, {**cfg["em"], "pairs": cfg["em"].get("pairs", 50)},
                                       cfg["em"]["lm_order"])
-        if method == "embed_align":  # unsupervised embedding alignment
+        if method == "embed_align":  # unsupervised embedding alignment (proposal 4.2 stretch)
             from .embed import embed_align
 
             return embed_align(units, self.english, cfg["embed"])

@@ -1,4 +1,4 @@
-"""Embedding-alignment decipherment.
+"""Embedding-alignment decipherment (proposal 4.2 stretch goal).
 
 Word embeddings are trained independently on the segmented cipher and on English
 (PPMI + truncated SVD), then aligned without any dictionary. Because the cipher is an

@@ -75,7 +75,7 @@ def _pair_states(english, words, n_pairs):
 
 def _expand(start_w, trans_w, end_w, widx, states):
     """HMM over word states and English word-pair states (a, b). A pair state emits one
-    cipher unit but stands for two words, so its transition factors are
+    cipher unit but stands for two words (proposal 4.3), so its transition factors are
     P(first | prev last word) and the internal P(b | a)."""
     first = np.array([widx[s[0] if isinstance(s, tuple) else s] for s in states])
     last = np.array([widx[s[1] if isinstance(s, tuple) else s] for s in states])
