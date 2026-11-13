@@ -2,6 +2,8 @@
 
 CS787: Generative Artificial Intelligence — final report
 
+**Aayush Singh (220024) and Akash Verma (220097)**
+
 ## Abstract
 
 We study whether an unknown text can be deciphered when even its word boundaries are missing, and whether neural generative models make this easier than the classical Bayesian and n-gram approaches. English text from TinyStories is enciphered by replacing each word type with a random variable-length symbol code and deleting word boundaries. The system sees only the unsegmented cipher and a separate, non-parallel English corpus. We build a two-stage pipeline: unsupervised word segmentation (Dirichlet-process and hierarchical-Dirichlet-process samplers, an entropy heuristic, and a neural character language model) followed by key recovery (frequency matching, iterative EM with an n-gram LM, EM with word-pair states, embedding alignment, annealed key search with n-gram and neural scorers, and an LLM-based corrector). With oracle boundaries, EM already recovers 89–99% of tokens, and an LLM corrector adds one to two points on top. With learned boundaries, accuracy collapses to 8–55%. **Segmentation quality, not the strength of the English prior, is the dominant limit on end-to-end recovery.**
